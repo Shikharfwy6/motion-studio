@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#101118">
+<title>Motion Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">Motion Studio</div>
+    <div class="hdr-actions">
+      <button id="btnUndo" aria-label="Undo">&#8630;</button>
+      <button id="btnRedo" aria-label="Redo">&#8631;</button>
+      <button id="btnExport" class="primary">Export video</button>
+    </div>
+  </header>
+
+  <main id="stage"><canvas id="cv" width="720" height="1280"></canvas></main>
+
+  <section id="transport">
+    <button id="btnStart" aria-label="Go to start">&#9198;</button>
+    <button id="btnPlay" class="primary" aria-label="Play">&#9654;</button>
+    <button id="btnPrev" aria-label="Back one frame">&#8249;</button>
+    <button id="btnNext" aria-label="Forward one frame">&#8250;</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Playhead">
+    <span id="timeLabel">0.00s</span>
+  </section>
+
+  <nav id="tabs">
+    <button data-tab="Timeline" class="on">Timeline</button>
+    <button data-tab="Props">Properties</button>
+    <button data-tab="Add">Add</button>
+    <button data-tab="Project">Project</button>
+  </nav>
+
+  <section id="panel">
+    <div class="pane on" id="paneTimeline">
+      <div class="tl-tools">
+        <button id="zoomOut" aria-label="Zoom out">&#8722;</button>
+        <button id="zoomIn" aria-label="Zoom in">+</button>
+        <span class="dim">Drag the ruler to scrub. Tap a diamond to jump to a keyframe.</span>
+      </div>
+      <div id="tl"></div>
+    </div>
+    <div class="pane" id="paneProps"></div>
+    <div class="pane" id="paneAdd">
+      <h4>Layers</h4>
+      <div class="btn-grid">
+        <button data-add="text">Text</button>
+        <button data-add="rect">Rectangle</button>
+        <button data-add="circle">Circle</button>
+        <button id="btnImage">Image</button>
+      </div>
+      <input type="file" id="fileImage" accept="image/*" hidden>
+      <h4>Animation presets for the selected layer</h4>
+      <p class="dim">Presets start at the playhead.</p>
+      <div class="btn-grid" id="presets"></div>
+    </div>
+    <div class="pane" id="paneProject">
+      <h4>Canvas size</h4>
+      <div class="btn-grid" id="aspects"></div>
+      <div class="field-grid">
+        <label>Duration (seconds)<input type="number" id="pDuration" min="1" max="120" step="0.5"></label>
+        <label>Background<input type="color" id="pBg"></label>
+        <label class="check"><input type="checkbox" id="pLoop"> Loop playback</label>
+      </div>
+      <h4>Project</h4>
+      <div class="btn-grid">
+        <button id="btnNew">New project</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="modal"></div>
+<div id="toast"></div>
+<script src="js/app.js"></script>
+</body>
+</html>
