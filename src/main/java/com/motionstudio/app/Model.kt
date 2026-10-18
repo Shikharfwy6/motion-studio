@@ -181,7 +181,7 @@ class Project(var id: String = UUID.randomUUID().toString().replace("-", "").tak
         return l
     }
 
-    fun setRatio(label: String) {
+    fun changeRatio(label: String) {
         val r = RATIOS.firstOrNull { it.first == label } ?: return
         val rx = r.second.toFloat() / W
         val ry = r.third.toFloat() / H
