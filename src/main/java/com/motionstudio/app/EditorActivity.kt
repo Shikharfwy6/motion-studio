@@ -668,7 +668,7 @@ class EditorActivity : Activity() {
         val ratioBtn = btn("Canvas size: ${p.ratio}") {}
         ratioBtn.setOnClickListener {
             val idx = Project.RATIOS.indexOfFirst { it.first == p.ratio }
-            p.setRatio(Project.RATIOS[(idx + 1) % Project.RATIOS.size].first)
+            p.changeRatio(Project.RATIOS[(idx + 1) % Project.RATIOS.size].first)
             ratioBtn.text = "Canvas size: ${p.ratio}"
             editor.invalidate()
             commit()
