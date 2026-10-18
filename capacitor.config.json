@@ -1,6 +1,0 @@
-{
-  "appId": "com.motionstudio.app",
-  "appName": "Motion Studio",
-  "webDir": "www",
-  "server": { "androidScheme": "https" }
-}
