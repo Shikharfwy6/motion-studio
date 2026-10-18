@@ -1,27 +1,30 @@
-name: Unzip project
+name: Build APK
 
 on:
+  push:
+    branches: [main, master]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  unzip:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip and clean old files
-        run: |
-          rm -f src/main/java/com/motionstudio/app/MainActivity.kt
-          unzip -o motion-studio-native.zip -x ".github/*"
-          rm motion-studio-native.zip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
-      - name: Commit
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add -A
-          git commit -m "Unzip project" || echo "nothing to commit"
-          git push
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-studio-apk
+          path: build/outputs/apk/debug/*.apk
