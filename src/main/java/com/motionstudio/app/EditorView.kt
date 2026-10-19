@@ -19,6 +19,14 @@ class EditorView(context: Context, private val p: Project) : View(context) {
     var onEdit: (() -> Unit)? = null
     var onCommit: (() -> Unit)? = null
 
+    /** The GPU preview that sits under this overlay; it is redrawn whenever this view is invalidated. */
+    var gl: GLEditorView? = null
+
+    override fun invalidate() {
+        super.invalidate()
+        gl?.requestRender()
+    }
+
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = C_ACCENT
         style = Paint.Style.STROKE
@@ -44,17 +52,10 @@ class EditorView(context: Context, private val p: Project) : View(context) {
     private var r0 = 0f
 
     override fun onDraw(c: Canvas) {
-        c.drawColor(0xFF0A0B10.toInt())
         val m = 16f
         sc = min((width - 2 * m) / p.W, (height - 2 * m) / p.H)
         ox = (width - p.W * sc) / 2f
         oy = (height - p.H * sc) / 2f
-        c.save()
-        c.translate(ox, oy)
-        c.scale(sc, sc)
-        c.clipRect(0f, 0f, p.W.toFloat(), p.H.toFloat())
-        Renderer.draw(c, p, p.time, false)
-        c.restore()
 
         val l = p.sel
         if (l != null && l.visible(p.time)) {
