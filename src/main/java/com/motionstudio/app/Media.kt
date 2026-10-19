@@ -5,10 +5,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
-import android.os.Handler
-import android.os.Looper
-import java.util.concurrent.Executors
-import kotlin.math.abs
 import kotlin.math.max
 
 class VideoInfo(val dur: Float, val w: Int, val h: Int)
@@ -66,18 +62,10 @@ object MediaCache {
     }
 }
 
+/** Only used for project thumbnails (the live preview and export use the GPU decoder). */
 object VideoCache {
     private val lock = Any()
     private val retrievers = HashMap<String, MediaMetadataRetriever>()
-    private val frames = HashMap<String, Bitmap>()
-    private val times = HashMap<String, Long>()
-    private val pending = HashMap<String, Long>()
-    private val busy = HashSet<String>()
-    private val exec = Executors.newSingleThreadExecutor()
-    private val ui = Handler(Looper.getMainLooper())
-
-    @Volatile
-    var onFrame: (() -> Unit)? = null
 
     private fun retriever(path: String): MediaMetadataRetriever = synchronized(lock) {
         retrievers.getOrPut(path) {
@@ -87,48 +75,10 @@ object VideoCache {
         }
     }
 
-    /** Returns the latest decoded frame immediately and asks a background thread for a closer one. */
-    fun previewFrame(path: String, us: Long): Bitmap? {
-        val bmp = synchronized(lock) { frames[path] }
-        val t = synchronized(lock) { times[path] }
-        if (t == null || abs(t - us) > 45_000L) request(path, us)
-        return bmp
-    }
-
-    private fun request(path: String, us: Long) {
-        synchronized(lock) {
-            pending[path] = us
-            if (busy.contains(path)) return
-            busy.add(path)
-        }
-        exec.execute {
-            while (true) {
-                val t = synchronized(lock) {
-                    val v = pending.remove(path)
-                    if (v == null) busy.remove(path)
-                    v
-                } ?: return@execute
-                val bmp = grab(path, t, 960)
-                if (bmp != null) synchronized(lock) { frames[path] = bmp; times[path] = t }
-                ui.post { onFrame?.invoke() }
-            }
-        }
-    }
-
-    fun exactFrame(path: String, us: Long): Bitmap? = grab(path, us, 0)
-
-    private fun grab(path: String, us: Long, maxDim: Int): Bitmap? {
+    fun exactFrame(path: String, us: Long): Bitmap? {
         return try {
             val r = retriever(path)
-            val f = synchronized(r) { r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST) } ?: return null
-            if (maxDim > 0 && max(f.width, f.height) > maxDim) {
-                val s = maxDim.toFloat() / max(f.width, f.height)
-                val sm = Bitmap.createScaledBitmap(
-                    f, (f.width * s).toInt().coerceAtLeast(1), (f.height * s).toInt().coerceAtLeast(1), true
-                )
-                f.recycle()
-                sm
-            } else f
+            synchronized(r) { r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST) }
         } catch (e: Exception) {
             null
         }
@@ -138,9 +88,6 @@ object VideoCache {
         synchronized(lock) {
             for (r in retrievers.values) try { r.release() } catch (e: Exception) {}
             retrievers.clear()
-            frames.clear()
-            times.clear()
-            pending.clear()
         }
     }
 }
