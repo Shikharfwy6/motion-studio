@@ -145,10 +145,10 @@ object Renderer {
                     val file = Store.mediaPath(p.id, m)
                     val src = max(0f, t - l.start + l.trim)
                     val us = (src * 1_000_000f).toLong()
-                    val bmp = if (exact) VideoCache.exactFrame(file, us) else VideoCache.previewFrame(file, us)
+                    val bmp = VideoCache.exactFrame(file, us)
                     if (bmp != null) {
                         drawBmp(c, bmp, l, a)
-                        if (exact) toRecycle.add(bmp)
+                        toRecycle.add(bmp)
                     }
                 }
             }
