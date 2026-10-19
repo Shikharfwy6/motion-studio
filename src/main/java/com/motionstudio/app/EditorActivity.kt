@@ -35,6 +35,10 @@ import kotlin.math.min
 class EditorActivity : Activity() {
     private lateinit var p: Project
     private lateinit var editor: EditorView
+    private lateinit var gl: GLEditorView
+    private lateinit var stage: FrameLayout
+    private var glW = 0
+    private var glH = 0
     private lateinit var timeline: TimelineView
     private lateinit var nameEdit: EditText
     private lateinit var playIcon: IconView
@@ -165,7 +169,6 @@ class EditorActivity : Activity() {
         timeline.onSelect = { editor.invalidate(); refreshProps() }
         timeline.onChanged = { editor.invalidate() }
         timeline.onCommit = { commit() }
-        VideoCache.onFrame = { editor.invalidate() }
 
         val root = FrameLayout(this)
         root.setBackgroundColor(C_INK)
@@ -195,7 +198,14 @@ class EditorActivity : Activity() {
         top.addView(icon(IconView.EXPORT) { doExport() }, LinearLayout.LayoutParams(dp(44), dp(44)))
         main.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        main.addView(editor, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        stage = FrameLayout(this)
+        stage.setBackgroundColor(0xFF0A0B10.toInt())
+        gl = GLEditorView(this, p)
+        editor.gl = gl
+        stage.addView(gl, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.CENTER))
+        stage.addView(editor, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutGl() }
+        main.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         // toolbar
         val tb = LinearLayout(this)
@@ -506,7 +516,24 @@ class EditorActivity : Activity() {
         redoIcon.isEnabled = hi < hist.size - 1
     }
 
+    /** Sizes the GPU preview to the project's aspect ratio, centred in the stage (same maths as the overlay). */
+    private fun layoutGl() {
+        if (!::stage.isInitialized || !::gl.isInitialized) return
+        val w = stage.width
+        val h = stage.height
+        if (w <= 0 || h <= 0) return
+        val m = 16f
+        val sc = min((w - 2 * m) / p.W, (h - 2 * m) / p.H)
+        val gw = (p.W * sc).toInt().coerceAtLeast(2)
+        val gh = (p.H * sc).toInt().coerceAtLeast(2)
+        if (gw == glW && gh == glH) return
+        glW = gw
+        glH = gh
+        gl.layoutParams = FrameLayout.LayoutParams(gw, gh, Gravity.CENTER)
+    }
+
     private fun afterStructure() {
+        layoutGl()
         timeline.invalidate()
         editor.invalidate()
         refreshProps()
@@ -670,6 +697,7 @@ class EditorActivity : Activity() {
             val idx = Project.RATIOS.indexOfFirst { it.first == p.ratio }
             p.changeRatio(Project.RATIOS[(idx + 1) % Project.RATIOS.size].first)
             ratioBtn.text = "Canvas size: ${p.ratio}"
+            layoutGl()
             editor.invalidate()
             commit()
         }
@@ -701,11 +729,11 @@ class EditorActivity : Activity() {
 
     /* ---------------- time / playback ---------------- */
 
-    private fun setTime(t: Float) {
+    private fun setTime(t: Float, light: Boolean = false) {
         p.time = t.coerceIn(0f, p.duration)
         editor.invalidate()
         timeline.invalidate()
-        refreshProps()
+        if (!light) refreshProps()
     }
 
     private val tick = object : Runnable {
@@ -715,7 +743,7 @@ class EditorActivity : Activity() {
             var t = p.time + (now - lastNs) / 1e9f
             lastNs = now
             if (t >= p.duration) t = 0f
-            setTime(t)
+            setTime(t, true)
             handler.postDelayed(this, 16)
         }
     }
@@ -734,6 +762,7 @@ class EditorActivity : Activity() {
         handler.removeCallbacks(tick)
         playIcon.kind = IconView.PLAY
         playIcon.invalidate()
+        if (::sbScale.isInitialized) refreshProps()
     }
 
     private fun refreshProps() {
@@ -818,8 +847,14 @@ class EditorActivity : Activity() {
         if (sheet.visibility == View.VISIBLE) hideSheet() else super.onBackPressed()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::gl.isInitialized) gl.onResume()
+    }
+
     override fun onPause() {
         super.onPause()
+        if (::gl.isInitialized) gl.onPause()
         if (!::p.isInitialized || !::playIcon.isInitialized) return
         stopPlay()
         Store.save(p)
@@ -833,7 +868,6 @@ class EditorActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        VideoCache.onFrame = null
         VideoCache.release()
     }
 }
