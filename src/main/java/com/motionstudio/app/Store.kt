@@ -202,7 +202,9 @@ object Store {
             val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
             val c = Canvas(bmp)
             c.scale(sc, sc)
-            Renderer.draw(c, p, min(1f, p.duration), false)
+            Renderer.draw(c, p, min(1f, p.duration), true)
+            for (b in Renderer.toRecycle) b.recycle()
+            Renderer.toRecycle.clear()
             FileOutputStream(thumbFile(p.id)).use { bmp.compress(Bitmap.CompressFormat.PNG, 90, it) }
             bmp.recycle()
         } catch (e: Exception) {}
