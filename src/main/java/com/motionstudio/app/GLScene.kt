@@ -3,6 +3,9 @@ package com.motionstudio.app
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
@@ -13,8 +16,12 @@ import android.opengl.Matrix
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.tan
 
 /**
  * GPU compositor. Every layer is drawn as a textured quad with a transform matrix and alpha.
@@ -44,6 +51,8 @@ class GLScene {
     private val model = FloatArray(16)
     private val mvp = FloatArray(16)
     private val ident = FloatArray(16)
+    private val shear = FloatArray(16)
+    private val tmpM = FloatArray(16)
 
     private fun fb(a: FloatArray): FloatBuffer {
         val b = ByteBuffer.allocateDirect(a.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -172,24 +181,51 @@ class GLScene {
         return t
     }
 
-    private fun shapeBitmap(l: Layer): Made {
-        val sc = min(1f, 1024f / max(l.w, l.h))
-        val bw = max(2, (l.w * sc).toInt())
-        val bh = max(2, (l.h * sc).toInt())
-        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
-        val c = Canvas(bmp)
-        c.translate(bw / 2f, bh / 2f)
-        c.scale(bw / l.w, bh / l.h)
-        paint.color = l.color
-        paint.style = Paint.Style.FILL
-        Renderer.shapePath(l.shape, l.w, l.h, l.radius, path)
-        c.drawPath(path, paint)
-        return Made(bmp, l.w, l.h, true)
+    private fun fillPaint(l: Layer, w: Float, h: Float): Paint? {
+        if (l.fillType == 0) return null
+        val pt = Paint(Paint.ANTI_ALIAS_FLAG)
+        pt.style = Paint.Style.FILL
+        if (l.fillType == 2) {
+            if (l.gradType == 1) {
+                pt.shader = RadialGradient(0f, 0f, max(max(w, h) / 2f, 1f), l.color, l.color2, Shader.TileMode.CLAMP)
+            } else {
+                val a = Math.toRadians(l.gradAngle.toDouble())
+                val dx = (cos(a) * w / 2f).toFloat()
+                val dy = (sin(a) * h / 2f).toFloat()
+                pt.shader = LinearGradient(-dx, -dy, dx, dy, l.color, l.color2, Shader.TileMode.CLAMP)
+            }
+        } else {
+            pt.color = l.color
+        }
+        return pt
     }
 
-    private fun textBitmap(l: Layer): Made {
+    private fun drawContent(c: Canvas, l: Layer, pt: Paint, sz: FloatArray) {
+        if (l.type == T_TEXT) {
+            pt.typeface = Fonts.face(l.fontIdx)
+            pt.textSize = l.size
+            val fm = pt.fontMetrics
+            val lines = l.text.split("\n")
+            val lh = l.size * 1.2f
+            for ((i, ln) in lines.withIndex()) {
+                val yy = (i - (lines.size - 1) / 2f) * lh - (fm.ascent + fm.descent) / 2f
+                when (l.align) {
+                    0 -> { pt.textAlign = Paint.Align.LEFT; c.drawText(ln, -sz[0] / 2f, yy, pt) }
+                    2 -> { pt.textAlign = Paint.Align.RIGHT; c.drawText(ln, sz[0] / 2f, yy, pt) }
+                    else -> { pt.textAlign = Paint.Align.CENTER; c.drawText(ln, 0f, yy, pt) }
+                }
+            }
+        } else {
+            Renderer.shapePath(l.shape, l.w, l.h, l.radius, path)
+            c.drawPath(path, pt)
+        }
+    }
+
+    /** Shapes and text are rasterised once (fill, gradient, border and shadow included) and cached as a texture. */
+    private fun raster(l: Layer): Made {
         val sz = Renderer.sizeOf(l)
-        val pad = 12f
+        val sh = if (l.shadowOn) l.shadowBlur + max(abs(l.shadowDx), abs(l.shadowDy)) else 0f
+        val pad = 12f + l.strokeW + sh
         val qw = sz[0] + 2 * pad
         val qh = sz[1] + 2 * pad
         val sc = min(1f, 2048f / max(qw, qh))
@@ -197,26 +233,52 @@ class GLScene {
         val c = Canvas(bmp)
         c.scale(bmp.width / qw, bmp.height / qh)
         c.translate(qw / 2f, qh / 2f)
-        textPaint.color = l.color
-        textPaint.textSize = l.size
-        val fm = textPaint.fontMetrics
-        val lines = l.text.split("\n")
-        val lh = l.size * 1.2f
-        for ((i, ln) in lines.withIndex()) {
-            val yy = (i - (lines.size - 1) / 2f) * lh - (fm.ascent + fm.descent) / 2f
-            c.drawText(ln, 0f, yy, textPaint)
+        val fill = fillPaint(l, sz[0], sz[1])
+        if (fill != null) {
+            if (l.shadowOn) fill.setShadowLayer(l.shadowBlur, l.shadowDx, l.shadowDy, l.shadowColor)
+            drawContent(c, l, fill, sz)
+            fill.clearShadowLayer()
+        }
+        if (l.strokeW > 0f) {
+            val st = Paint(Paint.ANTI_ALIAS_FLAG)
+            st.style = Paint.Style.STROKE
+            st.strokeWidth = l.strokeW
+            st.strokeJoin = Paint.Join.ROUND
+            st.color = l.strokeColor
+            drawContent(c, l, st, sz)
         }
         return Made(bmp, qw, qh, true)
     }
 
+    private fun keyOf(l: Layer): String =
+        "${l.type}|${l.shape}|${l.w}|${l.h}|${l.radius}|${l.text}|${l.size}|${l.fontIdx}|${l.align}|" +
+            "${l.fillType}|${l.color}|${l.color2}|${l.gradType}|${l.gradAngle}|${l.strokeW}|${l.strokeColor}|" +
+            "${l.shadowOn}|${l.shadowBlur}|${l.shadowDx}|${l.shadowDy}|${l.shadowColor}"
+
+    private fun setBlend(mode: Int) {
+        when (mode) {
+            1 -> GLES20.glBlendFunc(GLES20.GL_DST_COLOR, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            2 -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_COLOR)
+            3 -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE)
+            else -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        }
+    }
+
     private fun quad(
-        pr: Prog, target: Int, texId: Int, x: Float, y: Float, rot: Float, sc: Float,
+        pr: Prog, target: Int, texId: Int, l: Layer, x: Float, y: Float, rot: Float, sc: Float,
         qw: Float, qh: Float, alpha: Float, oes: Boolean, texMat: FloatArray
     ) {
         Matrix.setIdentityM(model, 0)
         Matrix.translateM(model, 0, x, y, 0f)
         Matrix.rotateM(model, 0, rot, 0f, 0f, 1f)
-        Matrix.scaleM(model, 0, sc * qw, sc * qh, 1f)
+        if (l.skewX != 0f || l.skewY != 0f) {
+            Matrix.setIdentityM(shear, 0)
+            shear[4] = tan(Math.toRadians(l.skewX.toDouble())).toFloat()
+            shear[1] = tan(Math.toRadians(l.skewY.toDouble())).toFloat()
+            Matrix.multiplyMM(tmpM, 0, model, 0, shear, 0)
+            System.arraycopy(tmpM, 0, model, 0, 16)
+        }
+        Matrix.scaleM(model, 0, sc * qw * (if (l.flipH) -1f else 1f), sc * qh * (if (l.flipV) -1f else 1f), 1f)
         Matrix.multiplyMM(mvp, 0, proj, 0, model, 0)
         GLES20.glUseProgram(pr.id)
         GLES20.glUniformMatrix4fv(pr.uMVP, 1, false, mvp, 0)
@@ -243,7 +305,6 @@ class GLScene {
         GLES20.glClearColor(Color.red(bg) / 255f, Color.green(bg) / 255f, Color.blue(bg) / 255f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         GLES20.glEnable(GLES20.GL_BLEND)
-        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         Matrix.orthoM(proj, 0, 0f, p.W.toFloat(), p.H.toFloat(), 0f, -1f, 1f)
 
         val alive = HashSet<Int>()
@@ -252,7 +313,7 @@ class GLScene {
         for (g in gone) decoders.remove(g)?.release()
 
         for (l in layers) {
-            if (!l.visible(t)) continue
+            if (!l.shown(t)) continue
             try {
                 drawLayer(p, l, t, tp, op)
             } catch (e: Exception) {
@@ -268,17 +329,12 @@ class GLScene {
         val rot = l.eval(P_ROT, t)
         val a = l.eval(P_ALPHA, t).coerceIn(0f, 1f)
         if (a <= 0f || sc == 0f) return
+        setBlend(l.blend)
         val gl2d = GLES20.GL_TEXTURE_2D
         when (l.type) {
-            T_SHAPE -> {
-                val key = "S${l.shape}:${l.w}:${l.h}:${l.radius}:${l.color}"
-                val tx = tex(key) { shapeBitmap(l) } ?: return
-                quad(tp, gl2d, tx.id, x, y, rot, sc, tx.qw, tx.qh, a, false, ident)
-            }
-            T_TEXT -> {
-                val key = "T${l.text}|${l.size}|${l.color}"
-                val tx = tex(key) { textBitmap(l) } ?: return
-                quad(tp, gl2d, tx.id, x, y, rot, sc, tx.qw, tx.qh, a, false, ident)
+            T_SHAPE, T_TEXT -> {
+                val tx = tex(keyOf(l)) { raster(l) } ?: return
+                quad(tp, gl2d, tx.id, l, x, y, rot, sc, tx.qw, tx.qh, a, false, ident)
             }
             T_IMAGE -> {
                 val m = l.media ?: return
@@ -287,15 +343,15 @@ class GLScene {
                     val bmp = MediaCache.image(file)
                     if (bmp == null) null else Made(bmp, 1f, 1f, false)
                 } ?: return
-                quad(tp, gl2d, tx.id, x, y, rot, sc, l.w, l.h, a, false, ident)
+                quad(tp, gl2d, tx.id, l, x, y, rot, sc, l.w, l.h, a, false, ident)
             }
             T_VIDEO -> {
                 val m = l.media ?: return
                 val file = Store.mediaPath(p.id, m)
                 val dec = decoders.getOrPut(l.id) { VideoDecoder(file) }
-                val srcUs = (max(0f, t - l.start + l.trim) * 1_000_000f).toLong()
+                val srcUs = ((max(0f, (t - l.start) * l.speed) + l.trim) * 1_000_000f).toLong()
                 if (dec.frameAt(srcUs)) {
-                    quad(op, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, dec.texId, x, y, rot, sc, l.w, l.h, a, true, dec.texMatrix)
+                    quad(op, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, dec.texId, l, x, y, rot, sc, l.w, l.h, a, true, dec.texMatrix)
                 }
             }
         }
