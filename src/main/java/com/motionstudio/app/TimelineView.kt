@@ -19,6 +19,7 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
     var onSelect: (() -> Unit)? = null
     var onChanged: (() -> Unit)? = null
     var onCommit: (() -> Unit)? = null
+    var onToggleEye: ((Layer) -> Unit)? = null
 
     private val d = resources.displayMetrics.density
     private fun dp(v: Float) = v * d
@@ -57,7 +58,13 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
     private fun cx() = width / 2f
     private fun xOf(t: Float) = cx() + (t - p.time) * pps
 
-    private fun typeColor(l: Layer): Int = when (l.type) {
+    /** While a layer is selected only that layer's row is shown, like Alight Motion. */
+    private fun rows(): List<Layer> {
+        val s = p.sel
+        return if (s != null && p.layers.contains(s)) listOf(s) else p.layers.asReversed()
+    }
+
+    private fun typeColor(l: Layer): Int = if (l.tag != 0) TAG_COLORS[l.tag] else when (l.type) {
         T_TEXT -> 0xFF3B82F6.toInt()
         T_SHAPE -> 0xFFEC4899.toInt()
         T_IMAGE -> 0xFF22C55E.toInt()
@@ -72,7 +79,7 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
     override fun onDraw(c: Canvas) {
         c.drawColor(C_PANEL)
         clampScroll()
-        val rows = p.layers.asReversed()
+        val rows = rows()
         val w = width.toFloat()
         val h = height.toFloat()
         val cx = cx()
@@ -100,6 +107,27 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
                 c.drawRoundRect(rf.left + dp(3f), hy - dp(8f), rf.left + dp(6f), hy + dp(8f), dp(2f), dp(2f), fill)
                 c.drawRoundRect(rf.right - dp(6f), hy - dp(8f), rf.right - dp(3f), hy + dp(8f), dp(2f), dp(2f), fill)
             }
+            // eye button (hide / show) and collapse chevron
+            val ey = top + rowH / 2f
+            fill.color = 0xFF2B2F42.toInt()
+            fill.alpha = 255
+            c.drawRoundRect(dp(4f), top + dp(6f), dp(40f), top + rowH - dp(6f), dp(10f), dp(10f), fill)
+            stroke.color = if (l.hidden) C_DIM else C_TEXT
+            stroke.strokeWidth = dp(1.6f)
+            rf.set(dp(12f), ey - dp(5f), dp(32f), ey + dp(5f))
+            c.drawOval(rf, stroke)
+            fill.color = stroke.color
+            c.drawCircle(dp(22f), ey, dp(2.5f), fill)
+            if (l.hidden) c.drawLine(dp(12f), ey + dp(7f), dp(32f), ey - dp(7f), stroke)
+            if (isSel) {
+                path.reset()
+                path.moveTo(dp(58f), ey - dp(7f))
+                path.lineTo(dp(51f), ey)
+                path.lineTo(dp(58f), ey + dp(7f))
+                c.drawPath(path, stroke)
+            }
+            stroke.strokeWidth = dp(2f)
+            rf.set(max(x0, dp(44f)), top + dp(5f), max(x1, x0 + dp(6f)), top + rowH - dp(5f))
             // name
             c.save()
             c.clipRect(rf)
@@ -159,7 +187,7 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
     }
 
     private fun rowAt(y: Float): Layer? {
-        val rows = p.layers.asReversed()
+        val rows = rows()
         val i = ((y - rulerH + scrollY) / rowH).toInt()
         return if (y >= rulerH && i >= 0 && i < rows.size) rows[i] else null
     }
@@ -170,6 +198,16 @@ class TimelineView(context: Context, private val p: Project) : View(context) {
                 p.sel = null
                 onSelect?.invoke()
             }
+            return
+        }
+        if (x < dp(42f)) {
+            onToggleEye?.invoke(l)
+            invalidate()
+            return
+        }
+        if (x < dp(70f) && l === p.sel) {
+            p.sel = null
+            onSelect?.invoke()
             return
         }
         var best = -1f
