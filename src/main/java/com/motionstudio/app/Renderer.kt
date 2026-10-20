@@ -83,6 +83,7 @@ object Renderer {
 
     fun sizeOf(l: Layer): FloatArray {
         if (l.type != T_TEXT) return floatArrayOf(l.w, l.h)
+        tp.typeface = Fonts.face(l.fontIdx)
         tp.textSize = l.size
         val lines = l.text.split("\n")
         var w = 20f
@@ -117,6 +118,7 @@ object Renderer {
             T_TEXT -> {
                 tp.color = l.color
                 tp.alpha = a
+                tp.typeface = Fonts.face(l.fontIdx)
                 tp.textSize = l.size
                 val fm = tp.fontMetrics
                 val lines = l.text.split("\n")
