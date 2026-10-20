@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.text.Editable
-import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
@@ -21,79 +20,53 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 import java.io.FileInputStream
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.min
 
-class EditorActivity : Activity() {
+class EditorActivity : Activity(), PanelHost {
     private lateinit var p: Project
     private lateinit var editor: EditorView
     private lateinit var gl: GLEditorView
     private lateinit var stage: FrameLayout
-    private var glW = 0
-    private var glH = 0
     private lateinit var timeline: TimelineView
+    private lateinit var panel: LayerPanel
+    private lateinit var panelBox: FrameLayout
+    private lateinit var timelineBox: FrameLayout
+    private lateinit var projectBar: LinearLayout
+    private lateinit var layerBar: LinearLayout
+    private lateinit var titleBar: LinearLayout
+    private lateinit var titleText: TextView
     private lateinit var nameEdit: EditText
+    private lateinit var layerName: EditText
     private lateinit var playIcon: IconView
     private lateinit var undoIcon: IconView
     private lateinit var redoIcon: IconView
-    private lateinit var inspector: ScrollView
+    private lateinit var viewTools: LinearLayout
     private lateinit var sheet: LinearLayout
     private lateinit var sheetBody: FrameLayout
-    private lateinit var sbScale: SeekBar
-    private lateinit var sbRot: SeekBar
-    private lateinit var sbAlpha: SeekBar
-    private lateinit var easeBtn: Button
     private val tabBtns = ArrayList<Button>()
-    private val keyBtns = HashMap<String, Button>()
     private val handler = Handler(Looper.getMainLooper())
     private var playing = false
     private var lastNs = 0L
-    private var syncing = false
     private var sheetTab = 0
+    private var glW = 0
+    private var glH = 0
+    private var lastSelId = -1
+    private var clip: Layer? = null
     private val hist = ArrayList<String>()
     private var hi = -1
 
-    private val palette = intArrayOf(
-        Color.WHITE, Color.parseColor("#FF5A7A"), Color.parseColor("#FFC247"),
-        Color.parseColor("#4ADE80"), Color.parseColor("#38BDF8"),
-        Color.parseColor("#A78BFA"), Color.BLACK
-    )
     private val bgPalette = intArrayOf(
         Color.parseColor("#0D0E14"), Color.BLACK, Color.WHITE,
         Color.parseColor("#1E293B"), Color.parseColor("#7F1D1D"), Color.parseColor("#14532D")
-    )
-
-    private val presets = linkedMapOf<String, (Layer, Float) -> Unit>(
-        "Fade in" to { l: Layer, t: Float ->
-            l.upsert(P_ALPHA, t, 0f, 2); l.upsert(P_ALPHA, t + 0.6f, 1f, 2)
-        },
-        "Fade out" to { l: Layer, t: Float ->
-            l.upsert(P_ALPHA, t, 1f, 1); l.upsert(P_ALPHA, t + 0.6f, 0f, 1)
-        },
-        "Slide up" to { l: Layer, t: Float ->
-            val y = l.eval(P_Y, t)
-            l.upsert(P_Y, t, y + 220f, 2); l.upsert(P_Y, t + 0.7f, y, 2)
-            l.upsert(P_ALPHA, t, 0f, 2); l.upsert(P_ALPHA, t + 0.5f, 1f, 2)
-        },
-        "Pop in" to { l: Layer, t: Float ->
-            l.upsert(P_SCALE, t, 0f, 4); l.upsert(P_SCALE, t + 0.6f, 1f, 4)
-        },
-        "Spin in" to { l: Layer, t: Float ->
-            l.upsert(P_ROT, t, -180f, 2); l.upsert(P_ROT, t + 0.8f, 0f, 2)
-            l.upsert(P_SCALE, t, 0f, 2); l.upsert(P_SCALE, t + 0.8f, 1f, 2)
-        },
-        "Bounce drop" to { l: Layer, t: Float ->
-            val y = l.eval(P_Y, t)
-            l.upsert(P_Y, t, y - 500f, 5); l.upsert(P_Y, t + 1f, y, 5)
-        }
     )
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -117,33 +90,60 @@ class EditorActivity : Activity() {
         return b
     }
 
-    private fun icon(kind: Int, onClick: () -> Unit): IconView {
+    private fun icon(kind: Int, onClick: (View) -> Unit): IconView {
         val v = IconView(this, kind)
-        v.setOnClickListener { onClick() }
+        v.setOnClickListener { onClick(it) }
         return v
     }
 
-    private fun row(vararg views: View): HorizontalScrollView {
-        val ll = LinearLayout(this)
-        ll.orientation = LinearLayout.HORIZONTAL
-        ll.setPadding(dp(5), 0, dp(5), 0)
-        for (v in views) ll.addView(v)
-        val hs = HorizontalScrollView(this)
-        hs.isHorizontalScrollBarEnabled = false
-        hs.addView(ll)
-        return hs
+    private fun bar(): LinearLayout {
+        val b = LinearLayout(this)
+        b.orientation = LinearLayout.HORIZONTAL
+        b.gravity = Gravity.CENTER_VERTICAL
+        b.setBackgroundColor(C_PANEL)
+        b.setPadding(dp(4), dp(4), dp(4), dp(4))
+        return b
     }
 
-    private fun label(s: String): TextView {
-        val t = TextView(this)
-        t.text = s
-        t.setTextColor(C_DIM)
-        t.textSize = 12f
-        t.setPadding(dp(10), dp(10), dp(10), dp(2))
-        return t
+    private fun nameField(text: String): EditText {
+        val e = EditText(this)
+        e.setText(text)
+        e.setTextColor(C_TEXT)
+        e.textSize = 17f
+        e.setSingleLine(true)
+        e.setBackgroundColor(Color.TRANSPARENT)
+        return e
     }
 
-    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+    /* ---------------- PanelHost ---------------- */
+
+    override fun changed() {
+        editor.invalidate()
+    }
+
+    override fun title(t: String?) {
+        if (!::projectBar.isInitialized) return
+        if (t == null) {
+            showBar(if (p.sel != null) 1 else 0)
+        } else {
+            titleText.text = t
+            showBar(2)
+        }
+    }
+
+    override fun toast(s: String) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+    }
+
+    override fun timelineChanged() {
+        timeline.invalidate()
+    }
+
+    private fun showBar(i: Int) {
+        projectBar.visibility = if (i == 0) View.VISIBLE else View.GONE
+        layerBar.visibility = if (i == 1) View.VISIBLE else View.GONE
+        titleBar.visibility = if (i == 2) View.VISIBLE else View.GONE
+    }
 
     /* ---------------- build UI ---------------- */
 
@@ -162,52 +162,98 @@ class EditorActivity : Activity() {
 
         editor = EditorView(this, p)
         timeline = TimelineView(this, p)
+        panel = LayerPanel(this, p, this)
         editor.onSelect = { refreshProps(); timeline.invalidate() }
-        editor.onEdit = { refreshProps() }
-        editor.onCommit = { timeline.invalidate(); refreshProps(); commit() }
+        editor.onEdit = { panel.refresh() }
+        editor.onCommit = { timeline.invalidate(); panel.refresh(); commit() }
         timeline.onSeek = { stopPlay(); setTime(it) }
         timeline.onSelect = { editor.invalidate(); refreshProps() }
         timeline.onChanged = { editor.invalidate() }
         timeline.onCommit = { commit() }
+        timeline.onToggleEye = { l -> l.hidden = !l.hidden; editor.invalidate(); commit() }
 
         val root = FrameLayout(this)
         root.setBackgroundColor(C_INK)
         val main = LinearLayout(this)
         main.orientation = LinearLayout.VERTICAL
 
-        // top bar
-        val top = LinearLayout(this)
-        top.orientation = LinearLayout.HORIZONTAL
-        top.gravity = Gravity.CENTER_VERTICAL
-        top.setBackgroundColor(C_PANEL)
-        top.setPadding(dp(4), dp(4), dp(4), dp(4))
-        top.addView(icon(IconView.BACK) { finish() }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        nameEdit = EditText(this)
-        nameEdit.setText(p.name)
-        nameEdit.setTextColor(C_TEXT)
-        nameEdit.textSize = 17f
-        nameEdit.setSingleLine(true)
-        nameEdit.setBackgroundColor(Color.TRANSPARENT)
+        // three top bars, only one is visible at a time
+        val topStack = FrameLayout(this)
+        projectBar = bar()
+        projectBar.addView(icon(IconView.BACK) { finish() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        nameEdit = nameField(p.name)
         nameEdit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) { p.name = s.toString() }
         })
-        top.addView(nameEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        top.addView(icon(IconView.TUNE) { settings() }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        top.addView(icon(IconView.EXPORT) { doExport() }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        main.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        projectBar.addView(nameEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        projectBar.addView(icon(IconView.TUNE) { settings() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        projectBar.addView(icon(IconView.EXPORT) { doExport() }, LinearLayout.LayoutParams(dp(44), dp(44)))
 
+        layerBar = bar()
+        layerBar.addView(icon(IconView.BACK) { p.sel = null; refreshProps(); editor.invalidate() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        layerName = nameField("")
+        layerName.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val l = p.sel
+                if (l != null) { l.name = s.toString(); timeline.invalidate() }
+            }
+        })
+        layerBar.addView(layerName, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        layerBar.addView(icon(IconView.DUP) { duplicate() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        layerBar.addView(icon(IconView.TRASH) { deleteLayer() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        layerBar.addView(icon(IconView.DOTS) { moreMenu(it) }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        layerBar.visibility = View.GONE
+
+        titleBar = bar()
+        titleBar.addView(icon(IconView.BACK) { panel.back() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        titleText = TextView(this)
+        titleText.setTextColor(C_TEXT)
+        titleText.textSize = 17f
+        titleBar.addView(titleText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        titleBar.visibility = View.GONE
+
+        for (b in arrayOf(projectBar, layerBar, titleBar)) {
+            topStack.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        main.addView(topStack, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // preview: GPU view with the touch overlay on top, plus the preview tools column
         stage = FrameLayout(this)
         stage.setBackgroundColor(0xFF0A0B10.toInt())
         gl = GLEditorView(this, p)
         editor.gl = gl
         stage.addView(gl, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.CENTER))
         stage.addView(editor, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        viewTools = LinearLayout(this)
+        viewTools.orientation = LinearLayout.VERTICAL
+        viewTools.setBackgroundColor(0xDD202330.toInt())
+        viewTools.setPadding(dp(4), dp(4), dp(4), dp(4))
+        val gridBtn = btn("Grid") {}
+        gridBtn.setOnClickListener {
+            editor.showGrid = !editor.showGrid
+            gridBtn.setTextColor(if (editor.showGrid) C_GREEN else C_TEXT)
+            editor.invalidate()
+        }
+        val guideBtn = btn("Guides") {}
+        guideBtn.setOnClickListener {
+            editor.showGuides = !editor.showGuides
+            guideBtn.setTextColor(if (editor.showGuides) C_GREEN else C_TEXT)
+            editor.invalidate()
+        }
+        viewTools.addView(gridBtn)
+        viewTools.addView(guideBtn)
+        viewTools.visibility = View.GONE
+        val vlp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.TOP)
+        vlp.setMargins(0, dp(8), dp(8), 0)
+        stage.addView(viewTools, vlp)
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutGl() }
         main.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        // toolbar
+        // toolbar: undo, redo, start, play, end, layer menu, preview tools
         val tb = LinearLayout(this)
         tb.orientation = LinearLayout.HORIZONTAL
         tb.setBackgroundColor(C_PANEL)
@@ -219,15 +265,17 @@ class EditorActivity : Activity() {
             icon(IconView.START) { stopPlay(); setTime(0f) },
             playIcon,
             icon(IconView.END) { stopPlay(); setTime(p.duration) },
-            icon(IconView.DUP) { duplicate() },
-            icon(IconView.TRASH) { deleteLayer() }
+            icon(IconView.DUP) { layerMenu(it) },
+            icon(IconView.TUNE) {
+                viewTools.visibility = if (viewTools.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            }
         )
         for (v in items) tb.addView(v, LinearLayout.LayoutParams(0, dp(44), 1f))
         main.addView(tb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // timeline + plus button
-        val tf = FrameLayout(this)
-        tf.addView(timeline, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // timeline with the green plus button
+        timelineBox = FrameLayout(this)
+        timelineBox.addView(timeline, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val fab = IconView(this, IconView.PLUS)
         fab.tint = C_GREEN
         val ring = GradientDrawable()
@@ -239,17 +287,17 @@ class EditorActivity : Activity() {
         fab.setOnClickListener { showSheet() }
         val flp = FrameLayout.LayoutParams(dp(52), dp(52), Gravity.BOTTOM or Gravity.END)
         flp.setMargins(0, 0, dp(14), dp(14))
-        tf.addView(fab, flp)
-        main.addView(tf, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
+        timelineBox.addView(fab, flp)
+        main.addView(timelineBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
 
-        // inspector for the selected layer
-        inspector = buildInspector()
-        inspector.visibility = View.GONE
-        main.addView(inspector, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
+        // layer panel (only while a layer is selected)
+        panelBox = FrameLayout(this)
+        panelBox.addView(panel.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        panelBox.visibility = View.GONE
+        main.addView(panelBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(236)))
 
         root.addView(main, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // bottom sheet for adding things
         sheet = buildSheet()
         sheet.visibility = View.GONE
         root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320), Gravity.BOTTOM))
@@ -259,117 +307,154 @@ class EditorActivity : Activity() {
         hi = 0
         setTime(0f)
         updateUndoUI()
+        refreshProps()
     }
 
-    private fun keyRow(name: String, props: IntArray, sb: SeekBar?): LinearLayout {
-        val ll = LinearLayout(this)
-        ll.orientation = LinearLayout.HORIZONTAL
-        ll.gravity = Gravity.CENTER_VERTICAL
-        ll.setPadding(dp(10), 0, dp(10), 0)
-        val tv = TextView(this)
-        tv.text = name
-        tv.setTextColor(C_TEXT)
-        tv.textSize = 13f
-        ll.addView(tv, LinearLayout.LayoutParams(dp(74), ViewGroup.LayoutParams.WRAP_CONTENT))
-        if (sb != null) {
-            ll.addView(sb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    /* ---------------- selection ---------------- */
+
+    private fun refreshProps() {
+        val id = p.sel?.id ?: -1
+        if (id != lastSelId) {
+            lastSelId = id
+            onSelectionChanged()
         } else {
-            val hint = TextView(this)
-            hint.text = "Drag on the canvas"
-            hint.setTextColor(C_DIM)
-            hint.textSize = 12f
-            ll.addView(hint, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            panel.refresh()
         }
-        val kb = btn("\u25C6") {
+    }
+
+    private fun onSelectionChanged() {
+        val l = p.sel
+        val tl = timelineBox.layoutParams as LinearLayout.LayoutParams
+        if (l == null) {
+            panelBox.visibility = View.GONE
+            showBar(0)
+            tl.height = dp(200)
+        } else {
+            panelBox.visibility = View.VISIBLE
+            if (layerName.text.toString() != l.name) layerName.setText(l.name)
+            tl.height = dp(96)
+            panel.showGrid()
+        }
+        timelineBox.layoutParams = tl
+        timeline.invalidate()
+        editor.invalidate()
+    }
+
+    /* ---------------- menus ---------------- */
+
+    private fun moreMenu(anchor: View) {
+        val pm = PopupMenu(this, anchor)
+        for (n in arrayOf(
+            "Save to my elements", "Flip horizontal", "Flip vertical", "Fit to canvas",
+            "Fill canvas", "Stretch to canvas", "Create clipping mask", "Colour tag..."
+        )) pm.menu.add(n)
+        pm.setOnMenuItemClickListener { item ->
             val l = p.sel
-            if (l == null) {
-                toast("Select a layer first")
-            } else {
-                val has = props.all { l.keyAt(it, p.time) != null }
-                for (q in props) {
-                    if (has) l.removeKey(q, p.time) else l.upsert(q, p.time, l.eval(q, p.time), p.easeIdx)
+            if (l != null) {
+                when (item.title.toString()) {
+                    "Flip horizontal" -> { l.flipH = !l.flipH; editor.invalidate(); commit() }
+                    "Flip vertical" -> { l.flipV = !l.flipV; editor.invalidate(); commit() }
+                    "Fit to canvas" -> fitMode(0)
+                    "Fill canvas" -> fitMode(1)
+                    "Stretch to canvas" -> fitMode(2)
+                    "Colour tag..." -> tagDialog()
+                    else -> toast("Coming in the next update")
                 }
-                refreshProps()
+            }
+            true
+        }
+        pm.show()
+    }
+
+    private fun fitMode(mode: Int) {
+        val l = p.sel ?: return
+        val sz = Renderer.sizeOf(l)
+        val sx = p.W / sz[0]
+        val sy = p.H / sz[1]
+        if (mode == 2 && l.type != T_TEXT) {
+            l.w = p.W.toFloat()
+            l.h = p.H.toFloat()
+            l.set(P_SCALE, p.time, 1f, p.easeIdx)
+        } else {
+            l.set(P_SCALE, p.time, if (mode == 1) max(sx, sy) else min(sx, sy), p.easeIdx)
+        }
+        l.set(P_X, p.time, p.W / 2f, p.easeIdx)
+        l.set(P_Y, p.time, p.H / 2f, p.easeIdx)
+        editor.invalidate()
+        panel.refresh()
+        commit()
+    }
+
+    private fun tagDialog() {
+        val l = p.sel ?: return
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.setPadding(dp(12), dp(12), dp(12), dp(4))
+        val dlg = AlertDialog.Builder(this).setTitle("Colour tag").setView(row).setNegativeButton("Close", null).create()
+        for (i in TAG_COLORS.indices) {
+            val v = View(this)
+            val g = GradientDrawable()
+            g.setColor(if (i == 0) 0xFF3A3F55.toInt() else TAG_COLORS[i])
+            g.cornerRadius = dp(8).toFloat()
+            g.setStroke(dp(if (l.tag == i) 3 else 1), if (l.tag == i) Color.WHITE else 0xFF666666.toInt())
+            v.background = g
+            val lp = LinearLayout.LayoutParams(dp(36), dp(36))
+            lp.setMargins(dp(4), 0, dp(4), 0)
+            v.setOnClickListener {
+                l.tag = i
                 timeline.invalidate()
                 commit()
+                dlg.dismiss()
             }
+            row.addView(v, lp)
         }
-        kb.layoutParams = LinearLayout.LayoutParams(dp(46), dp(40))
-        keyBtns[name] = kb
-        ll.addView(kb)
-        return ll
+        dlg.show()
     }
 
-    private fun slider(max: Int, onChange: (Layer, Int) -> Unit): SeekBar {
-        val sb = SeekBar(this)
-        sb.max = max
-        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
-                val l = p.sel
-                if (fromUser && !syncing && l != null) {
-                    onChange(l, v)
-                    editor.invalidate()
+    private fun layerMenu(anchor: View) {
+        val pm = PopupMenu(this, anchor)
+        for (n in arrayOf(
+            "Select all layers", "Duplicate layer", "Save preset", "Copy layer", "Paste layer", "Paste style"
+        )) pm.menu.add(n)
+        pm.setOnMenuItemClickListener { item ->
+            when (item.title.toString()) {
+                "Duplicate layer" -> duplicate()
+                "Copy layer" -> {
+                    val l = p.sel
+                    if (l == null) toast("Select a layer first") else { clip = l.duplicate(0); toast("Layer copied") }
                 }
-            }
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {
-                refreshProps()
-                timeline.invalidate()
-                commit()
-            }
-        })
-        return sb
-    }
-
-    private fun buildInspector(): ScrollView {
-        val panel = LinearLayout(this)
-        panel.orientation = LinearLayout.VERTICAL
-        panel.addView(label("Tap the diamond to set a keyframe at the playhead."))
-        panel.addView(keyRow("Position", intArrayOf(P_X, P_Y), null))
-        sbScale = slider(500) { l, v -> l.set(P_SCALE, p.time, v / 100f, p.easeIdx) }
-        panel.addView(keyRow("Scale", intArrayOf(P_SCALE), sbScale))
-        sbRot = slider(720) { l, v -> l.set(P_ROT, p.time, (v - 360).toFloat(), p.easeIdx) }
-        panel.addView(keyRow("Rotation", intArrayOf(P_ROT), sbRot))
-        sbAlpha = slider(100) { l, v -> l.set(P_ALPHA, p.time, v / 100f, p.easeIdx) }
-        panel.addView(keyRow("Opacity", intArrayOf(P_ALPHA), sbAlpha))
-        easeBtn = btn("Easing: ${Ease.names[p.easeIdx]}") {
-            p.easeIdx = (p.easeIdx + 1) % Ease.names.size
-            easeBtn.text = "Easing: ${Ease.names[p.easeIdx]}"
-            val l = p.sel
-            if (l != null) for (q in 0 until 5) l.keyAt(q, p.time)?.ease = p.easeIdx
-            commit()
-        }
-        panel.addView(row(easeBtn))
-
-        panel.addView(label("Animation presets (start at the playhead)"))
-        val presetBtns = presets.map { (name, fn) ->
-            btn(name) {
-                val l = p.sel
-                if (l == null) {
-                    toast("Select a layer first")
-                } else {
-                    fn(l, p.time)
-                    refreshProps(); timeline.invalidate(); editor.invalidate(); commit()
+                "Paste layer" -> {
+                    val c = clip
+                    if (c == null) {
+                        toast("Nothing copied yet")
+                    } else {
+                        val n = c.duplicate(p.nextLayerId())
+                        n.name = c.name
+                        p.layers.add(n)
+                        p.sel = n
+                        afterStructure()
+                        commit()
+                    }
                 }
+                "Paste style" -> {
+                    val c = clip
+                    val l = p.sel
+                    if (c == null || l == null) {
+                        toast("Copy a layer and select another one first")
+                    } else {
+                        l.copyStyleFrom(c)
+                        editor.invalidate()
+                        commit()
+                    }
+                }
+                else -> toast("Coming in the next update")
             }
+            true
         }
-        panel.addView(row(*presetBtns.toTypedArray()))
-
-        panel.addView(label("Layer"))
-        panel.addView(row(
-            btn("Edit text") { editText() }, btn("Colour") { cycleColour() },
-            btn("Bigger") { resize(1.15f) }, btn("Smaller") { resize(1f / 1.15f) }
-        ))
-        panel.addView(row(
-            btn("Move up") { move(1) }, btn("Move down") { move(-1) }
-        ))
-        val pad = View(this)
-        panel.addView(pad, LinearLayout.LayoutParams(1, dp(20)))
-        val sv = ScrollView(this)
-        sv.setBackgroundColor(C_PANEL)
-        sv.addView(panel)
-        return sv
+        pm.show()
     }
+
+    /* ---------------- add sheet ---------------- */
 
     private fun buildSheet(): LinearLayout {
         val s = LinearLayout(this)
@@ -383,8 +468,7 @@ class EditorActivity : Activity() {
         tabs.orientation = LinearLayout.HORIZONTAL
         tabs.gravity = Gravity.CENTER_VERTICAL
         tabs.setPadding(dp(8), dp(6), dp(4), dp(2))
-        val names = arrayOf("Shapes", "Media", "Text")
-        for ((i, n) in names.withIndex()) {
+        for ((i, n) in arrayOf("Shapes", "Media", "Text").withIndex()) {
             val b = btn(n) { selectTab(i) }
             b.layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
             tabBtns.add(b)
@@ -413,7 +497,7 @@ class EditorActivity : Activity() {
             b.setTextColor(if (k == i) C_GREEN else C_DIM)
         }
         sheetBody.removeAllViews()
-        sheetBody.addView(when (i) { 0 -> shapesView(); 1 -> mediaView(); else -> textView() })
+        sheetBody.addView(when (i) { 0 -> shapesView(); 1 -> mediaView(); else -> textTab() })
     }
 
     private fun shapesView(): View {
@@ -462,7 +546,7 @@ class EditorActivity : Activity() {
         return sv
     }
 
-    private fun textView(): View {
+    private fun textTab(): View {
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
         col.setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -481,7 +565,7 @@ class EditorActivity : Activity() {
 
     /* ---------------- history / save ---------------- */
 
-    private fun commit() {
+    override fun commit() {
         val s = Store.toJson(p)
         if (hi >= 0 && hi < hist.size && hist[hi] == s) return
         while (hist.size > hi + 1) hist.removeAt(hist.size - 1)
@@ -601,8 +685,8 @@ class EditorActivity : Activity() {
         val path = Store.mediaPath(p.id, name)
         val l = p.newLayer(if (isVideo) T_VIDEO else T_IMAGE)
         l.media = name
-        var mw: Int
-        var mh: Int
+        val mw: Int
+        val mh: Int
         if (isVideo) {
             val info = MediaCache.videoInfo(path)
             if (info == null || info.dur <= 0f) { toast("Could not read that video"); return }
@@ -635,57 +719,12 @@ class EditorActivity : Activity() {
         commit()
     }
 
-    private fun move(dir: Int) {
-        val l = p.sel ?: return toast("Select a layer first")
-        val i = p.layers.indexOf(l)
-        val j = i + dir
-        if (j < 0 || j >= p.layers.size) return
-        p.layers.removeAt(i)
-        p.layers.add(j, l)
-        afterStructure()
-        commit()
-    }
-
     private fun deleteLayer() {
         val l = p.sel ?: return toast("Select a layer first")
         p.layers.remove(l)
         p.sel = null
         afterStructure()
         commit()
-    }
-
-    private fun resize(f: Float) {
-        val l = p.sel ?: return toast("Select a layer first")
-        if (l.type == T_TEXT) l.size = (l.size * f).coerceIn(20f, 400f) else { l.w *= f; l.h *= f }
-        editor.invalidate()
-        commit()
-    }
-
-    private fun cycleColour() {
-        val l = p.sel ?: return toast("Select a layer first")
-        if (l.type == T_IMAGE || l.type == T_VIDEO) return toast("Photos and videos have no colour")
-        val i = palette.indexOf(l.color)
-        l.color = palette[(i + 1) % palette.size]
-        editor.invalidate()
-        commit()
-    }
-
-    private fun editText() {
-        val l = p.sel ?: return toast("Select a layer first")
-        if (l.type != T_TEXT) return toast("Select a text layer")
-        val et = EditText(this)
-        et.setText(l.text)
-        et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        AlertDialog.Builder(this)
-            .setTitle("Edit text")
-            .setView(et)
-            .setPositiveButton("Save") { _, _ ->
-                l.text = et.text.toString().ifEmpty { " " }
-                editor.invalidate()
-                commit()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun settings() {
@@ -733,7 +772,7 @@ class EditorActivity : Activity() {
         p.time = t.coerceIn(0f, p.duration)
         editor.invalidate()
         timeline.invalidate()
-        if (!light) refreshProps()
+        if (!light) panel.refresh()
     }
 
     private val tick = object : Runnable {
@@ -762,28 +801,7 @@ class EditorActivity : Activity() {
         handler.removeCallbacks(tick)
         playIcon.kind = IconView.PLAY
         playIcon.invalidate()
-        if (::sbScale.isInitialized) refreshProps()
-    }
-
-    private fun refreshProps() {
-        val l = p.sel
-        inspector.visibility = if (l == null) View.GONE else View.VISIBLE
-        syncing = true
-        sbScale.progress = ((l?.eval(P_SCALE, p.time) ?: 1f) * 100f).toInt().coerceIn(0, 500)
-        sbRot.progress = ((l?.eval(P_ROT, p.time) ?: 0f) + 360f).toInt().coerceIn(0, 720)
-        sbAlpha.progress = ((l?.eval(P_ALPHA, p.time) ?: 1f) * 100f).toInt().coerceIn(0, 100)
-        syncing = false
-        val groups = mapOf(
-            "Position" to intArrayOf(P_X, P_Y), "Scale" to intArrayOf(P_SCALE),
-            "Rotation" to intArrayOf(P_ROT), "Opacity" to intArrayOf(P_ALPHA)
-        )
-        for ((name, props) in groups) {
-            val b = keyBtns[name] ?: continue
-            val on = l != null && props.all { l.keyAt(it, p.time) != null }
-            val has = l != null && props.any { l.keys[it].isNotEmpty() }
-            b.setBackgroundColor(if (on) C_KEY else C_PANEL2)
-            b.setTextColor(if (on) 0xFF2A1D00.toInt() else if (has) C_KEY else C_DIM)
-        }
+        if (::panel.isInitialized) panel.refresh()
     }
 
     /* ---------------- export ---------------- */
@@ -844,7 +862,10 @@ class EditorActivity : Activity() {
 
     override fun onBackPressed() {
         if (!::sheet.isInitialized) { super.onBackPressed(); return }
-        if (sheet.visibility == View.VISIBLE) hideSheet() else super.onBackPressed()
+        if (sheet.visibility == View.VISIBLE) { hideSheet(); return }
+        if (panel.back()) return
+        if (p.sel != null) { p.sel = null; refreshProps(); editor.invalidate(); return }
+        super.onBackPressed()
     }
 
     override fun onResume() {
