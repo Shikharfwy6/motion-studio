@@ -22,6 +22,14 @@ class EditorView(context: Context, private val p: Project) : View(context) {
     /** The GPU preview that sits under this overlay; it is redrawn whenever this view is invalidated. */
     var gl: GLEditorView? = null
 
+    var showGrid = false
+    var showGuides = false
+    private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x88FFFFFF.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+    }
+
     override fun invalidate() {
         super.invalidate()
         gl?.requestRender()
@@ -56,9 +64,25 @@ class EditorView(context: Context, private val p: Project) : View(context) {
         sc = min((width - 2 * m) / p.W, (height - 2 * m) / p.H)
         ox = (width - p.W * sc) / 2f
         oy = (height - p.H * sc) / 2f
+        if (showGrid) {
+            val gw = p.W * sc
+            val gh = p.H * sc
+            for (i in 1..2) {
+                c.drawLine(ox + gw * i / 3f, oy, ox + gw * i / 3f, oy + gh, guide)
+                c.drawLine(ox, oy + gh * i / 3f, ox + gw, oy + gh * i / 3f, guide)
+            }
+        }
+        if (showGuides) {
+            val gw = p.W * sc
+            val gh = p.H * sc
+            c.drawRect(ox + gw * 0.05f, oy + gh * 0.05f, ox + gw * 0.95f, oy + gh * 0.95f, guide)
+            c.drawRect(ox + gw * 0.10f, oy + gh * 0.10f, ox + gw * 0.90f, oy + gh * 0.90f, guide)
+            c.drawLine(ox + gw / 2f - 12f, oy + gh / 2f, ox + gw / 2f + 12f, oy + gh / 2f, guide)
+            c.drawLine(ox + gw / 2f, oy + gh / 2f - 12f, ox + gw / 2f, oy + gh / 2f + 12f, guide)
+        }
 
         val l = p.sel
-        if (l != null && l.visible(p.time)) {
+        if (l != null && l.shown(p.time)) {
             val s = l.eval(P_SCALE, p.time)
             val sz = Renderer.sizeOf(l)
             val hw = sz[0] * s * sc / 2f
@@ -76,7 +100,7 @@ class EditorView(context: Context, private val p: Project) : View(context) {
     private fun hit(x: Float, y: Float): Layer? {
         for (i in p.layers.indices.reversed()) {
             val l = p.layers[i]
-            if (!l.visible(p.time)) continue
+            if (!l.shown(p.time)) continue
             var s = l.eval(P_SCALE, p.time)
             if (abs(s) < 1e-3f) s = 1e-3f
             val dx = x - l.eval(P_X, p.time)
