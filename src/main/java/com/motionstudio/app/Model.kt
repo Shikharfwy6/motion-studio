@@ -1,6 +1,7 @@
 package com.motionstudio.app
 
 import android.graphics.Color
+import android.graphics.Typeface
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.pow
@@ -14,6 +15,30 @@ val C_DIM = 0xFF8D92A8.toInt()
 val C_ACCENT = 0xFFFF5A7A.toInt()
 val C_KEY = 0xFFFFC247.toInt()
 val C_GREEN = 0xFF00F5A0.toInt()
+
+/** Layer colour tags shown in the timeline (index 0 = none). */
+val TAG_COLORS = intArrayOf(
+    0, 0xFFEF4444.toInt(), 0xFFEC4899.toInt(), 0xFFF97316.toInt(),
+    0xFFFACC15.toInt(), 0xFF2DD4BF.toInt(), 0xFF38BDF8.toInt()
+)
+
+object Fonts {
+    val names = arrayOf("Sans", "Sans Bold", "Serif", "Mono", "Condensed", "Light", "Casual", "Script")
+    private val cache = HashMap<Int, Typeface>()
+
+    fun face(i: Int): Typeface = cache.getOrPut(i) {
+        when (i) {
+            1 -> Typeface.create("sans-serif", Typeface.BOLD)
+            2 -> Typeface.create("serif", Typeface.BOLD)
+            3 -> Typeface.create("monospace", Typeface.BOLD)
+            4 -> Typeface.create("sans-serif-condensed", Typeface.BOLD)
+            5 -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            6 -> Typeface.create("casual", Typeface.NORMAL)
+            7 -> Typeface.create("cursive", Typeface.NORMAL)
+            else -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
+}
 
 const val P_X = 0
 const val P_Y = 1
@@ -83,6 +108,29 @@ class Layer(val id: Int, val type: Int, var name: String) {
     var srcDur = 0f    // video: source clip length (seconds)
     var media: String? = null
 
+    var fillType = 1          // 0 none, 1 solid, 2 gradient
+    var color2 = Color.WHITE
+    var gradType = 0          // 0 linear, 1 radial
+    var gradAngle = 0f
+    var strokeW = 0f
+    var strokeColor = Color.BLACK
+    var shadowOn = false
+    var shadowBlur = 12f
+    var shadowDx = 6f
+    var shadowDy = 6f
+    var shadowColor = 0x99000000.toInt()
+    var blend = 0             // 0 normal, 1 multiply, 2 screen, 3 add
+    var hidden = false
+    var flipH = false
+    var flipV = false
+    var skewX = 0f
+    var skewY = 0f
+    var speed = 1f
+    var tag = 0
+    var align = 1             // 0 left, 1 centre, 2 right
+    var fontIdx = 0
+    var muted = false
+
     // x, y, scale, rotation (degrees), alpha (0..1)
     val base = floatArrayOf(0f, 0f, 1f, 0f, 1f)
     val keys = Array(5) { mutableListOf<Key>() }
@@ -129,11 +177,28 @@ class Layer(val id: Int, val type: Int, var name: String) {
 
     fun visible(t: Float) = t >= start - 1e-4f && t <= end + 1e-4f
 
+    /** Visible in time and not hidden with the eye button. */
+    fun shown(t: Float) = !hidden && visible(t)
+
+    /** Used by "paste style": copies how the layer looks, not where it is. */
+    fun copyStyleFrom(o: Layer) {
+        color = o.color; fillType = o.fillType; color2 = o.color2
+        gradType = o.gradType; gradAngle = o.gradAngle
+        strokeW = o.strokeW; strokeColor = o.strokeColor
+        shadowOn = o.shadowOn; shadowBlur = o.shadowBlur; shadowDx = o.shadowDx
+        shadowDy = o.shadowDy; shadowColor = o.shadowColor
+        blend = o.blend; base[P_ALPHA] = o.base[P_ALPHA]
+    }
+
     fun duplicate(newId: Int): Layer {
         val c = Layer(newId, type, "$name copy")
         c.text = text; c.size = size; c.color = color; c.w = w; c.h = h
         c.radius = radius; c.shape = shape; c.start = start; c.end = end
         c.trim = trim; c.srcDur = srcDur; c.media = media
+        c.copyStyleFrom(this)
+        c.hidden = hidden; c.flipH = flipH; c.flipV = flipV; c.skewX = skewX; c.skewY = skewY
+        c.speed = speed; c.tag = tag; c.align = align; c.fontIdx = fontIdx; c.muted = muted
+        c.text = text; c.size = size
         for (i in 0 until 5) {
             c.base[i] = base[i]
             for (k in keys[i]) c.keys[i].add(Key(k.t, k.v, k.ease))
