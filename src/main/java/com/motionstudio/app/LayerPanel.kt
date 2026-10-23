@@ -1,5 +1,6 @@
 package com.motionstudio.app
 
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -10,10 +11,12 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
@@ -187,7 +190,6 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         b?.alpha = if (on) 1f else 0.35f
     }
 
-    /** Number box: applies the value when the keyboard "done" key is pressed or focus leaves. */
     private class NumBox(ctx: Context, private val onDone: (Float) -> Unit) {
         val e = EditText(ctx)
         private var dirty = false
@@ -287,7 +289,6 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
 
     private fun easeShort() = arrayOf("Linear", "In", "Out", "In-Out", "Over", "Bounce")[p.easeIdx % 6]
 
-    /** Common frame for every sub-panel: back / keyframe / easing on the left, content in the middle. */
     private fun scaffold(title: String, props: IntArray?, content: View, right: View? = null) {
         inSub = true
         host.title(title)
@@ -340,7 +341,6 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         for (f in ArrayList(syncFns)) f()
     }
 
-    /** Opens one section directly (used by the Effects panel and keyboard shortcuts). */
     fun open(name: String) {
         if (p.sel == null) {
             host.toast("Select a layer first")
@@ -360,12 +360,12 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
             "particles" -> particles()
             "text" -> editText()
             "presets" -> presets()
+            "effects" -> effectsSubPanel()
             "3d" -> toggle3d()
             else -> showGrid()
         }
     }
 
-    /** Returns true when it handled the back press by leaving a sub-panel. */
     fun back(): Boolean {
         if (inSub) {
             showGrid()
@@ -374,7 +374,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         return false
     }
 
-    /* ---------------- main grid ---------------- */
+    /* ---------------- Main Alight Motion 3-Row Grid ---------------- */
 
     private fun tileBg(color: Int): GradientDrawable {
         val g = GradientDrawable()
@@ -390,12 +390,15 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         t.background = tileBg(C_PANEL2)
         val ic = IconView(ctx, kind)
         t.addView(ic, lp(dp(26), dp(26)))
-        val tv = TextView(ctx)
-        tv.text = label
-        tv.textSize = 10f
-        tv.setTextColor(C_DIM)
-        tv.gravity = Gravity.CENTER
-        t.addView(tv, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        if (label.isNotEmpty()) {
+            val tv = TextView(ctx)
+            tv.text = label
+            tv.textSize = 10f
+            tv.setTextColor(C_DIM)
+            tv.gravity = Gravity.CENTER
+            tv.maxLines = 2
+            t.addView(tv, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
         t.setOnClickListener { onClick() }
         gridIcons[label] = ic
         return t
@@ -409,7 +412,6 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         return v
     }
 
-    /** Label + slider row. [get] returns the slider position, [set] receives it while dragging. */
     private fun sl(c: LinearLayout, title: String, max: Int, get: () -> Int, set: (Int) -> Unit, fmt: (Int) -> String) {
         val tv = lbl(title)
         val sb = seek(max, { v -> set(v); tv.text = title + "  " + fmt(v); host.changed() }, { host.commit() })
@@ -430,44 +432,58 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         gridBtns.clear()
         gridIcons.clear()
         view.removeAllViews()
+
         val col = LinearLayout(ctx)
         col.orientation = LinearLayout.VERTICAL
-        col.setPadding(dp(8), dp(6), dp(8), dp(6))
+        col.setPadding(dp(8), dp(6), dp(8), dp(8))
 
-        fun g(kind: Int, label: String, onClick: () -> Unit): View {
+        fun g(key: String, kind: Int, label: String, onClick: () -> Unit): View {
             val t = tile(kind, label, onClick)
-            gridBtns[label] = t
+            gridBtns[key] = t
             return t
         }
-        fun row(vararg bs: View): LinearLayout {
+
+        fun row(heightDp: Int, vararg bs: View): LinearLayout {
             val r = LinearLayout(ctx)
             r.orientation = LinearLayout.HORIZONTAL
             for (b in bs) {
-                val m = lp(0, dp(52), 1f)
-                m.setMargins(dp(3), dp(3), dp(3), dp(3))
+                val m = lp(0, dp(heightDp), 1f)
+                m.setMargins(dp(4), dp(4), dp(4), dp(4))
                 r.addView(b, m)
             }
             return r
         }
+
+        // Row 1 (Quick Bar like Alight Motion Video 0:10): Speed | Trim Left | Trim Right | Mute
         col.addView(row(
-            g(IconView.SPEED, "Speed") { speed() }, g(IconView.TRIM_START, "Trim in") { trim(true) },
-            g(IconView.TRIM_END, "Trim out") { trim(false) }, g(IconView.MUTE, "Mute") { mute() }
+            44,
+            g("Speed", IconView.SPEED, "") { speed() },
+            g("TrimIn", IconView.TRIM_START, "") { trim(true) },
+            g("TrimOut", IconView.TRIM_END, "") { trim(false) },
+            g("Mute", IconView.MUTE, "") { mute() }
         ))
+
+        // Row 2 (3 Cards like Alight Motion Video 0:10): Colour & Fill | Border & Shadow | Blending & Opacity
         col.addView(row(
-            g(IconView.FILL, "Fill") { fill() }, g(IconView.BORDER, "Border") { border() },
-            g(IconView.BLEND, "Blend") { blend() }, g(IconView.MOVE, "Transform") { transform(0) }
+            68,
+            g("Fill", IconView.FILL, "Colour & Fill") { fill() },
+            g("Border", IconView.BORDER, "Border & Shadow") { border() },
+            g("Blend", IconView.BLEND, "Blending & Opacity") { blend() }
         ))
+
+        // Row 3 (4 Cards like Alight Motion Video 0:10): Move & Transform | Edit Text | Presets | Effects
         col.addView(row(
-            g(IconView.TEXT, "Text") { editText() }, g(IconView.STAR, "Presets") { presets() },
-            g(IconView.WIGGLE, "Wiggle") { expressions() }, g(IconView.SPARK, "Effects") { host.toast("Effects browser comes in the next update") }
+            68,
+            g("Transform", IconView.MOVE, "Move & Transform") { transform(0) },
+            g("Text", IconView.TEXT, "Edit Text") { editText() },
+            g("Presets", IconView.STAR, "Presets") { presets() },
+            g("Effects", IconView.SPARK, "Effects") { effectsSubPanel() }
         ))
-        col.addView(row(
-            g(IconView.CUBE, "3D") { toggle3d() }, g(IconView.PARTICLES, "Particles") { particles() },
-            View(ctx), View(ctx)
-        ))
+
         val sv = ScrollView(ctx)
         sv.addView(col)
         view.addView(sv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
         syncFns.add {
             val l = p.sel
             if (l != null) {
@@ -480,17 +496,276 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
                 en(gridBtns["Fill"], styled || part)
                 en(gridBtns["Border"], styled)
                 en(gridBtns["Blend"], !cam)
-                en(gridBtns["Effects"], false)
-                en(gridBtns["3D"], !cam)
-                en(gridBtns["Particles"], part)
-                val ic = gridIcons["3D"]
-                if (ic != null) {
-                    ic.tint = if (l.threeD) C_GREEN else C_TEXT
-                    ic.invalidate()
-                }
+                en(gridBtns["Effects"], true)
             }
         }
         refresh()
+    }
+
+    /* ---------------- Effects Sub-Panel (+ Add Effect & Effect Browser like Video 0:56 - 0:59) ---------------- */
+
+    private fun effectsSubPanel() {
+        val l = p.sel ?: return
+        syncFns.clear()
+        val c = vbox()
+
+        // Active effects / properties summary
+        if (l.wigAmp.any { it != 0f }) {
+            val wBtn = btn("✦ Wiggle / Oscillate (Active - Tap to edit)", 13f) { expressions() }
+            c.addView(wBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+        if (l.threeD) {
+            val dBtn = btn("✦ 3D Layer Perspective (Active)", 13f) { transform(1) }
+            c.addView(dBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+        if (l.shadowOn) {
+            val sBtn = btn("✦ Drop Shadow (Active - Tap to edit)", 13f) { borderTab = 1; border() }
+            c.addView(sBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+        if (l.strokeW > 0f) {
+            val bBtn = btn("✦ Stroke / Border (Active - Tap to edit)", 13f) { borderTab = 0; border() }
+            c.addView(bBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+        if (l.type == T_PARTICLES) {
+            val pBtn = btn("✦ Particle Emitter Settings", 13f) { particles() }
+            c.addView(pBtn, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        }
+
+        // "+ प्रभाव जोड़ें / + Add Effect" Button (Exact match with Video 0:56)
+        val addEffectBtn = Button(ctx).apply {
+            text = "+ प्रभाव जोड़ें  (+ Add Effect)"
+            isAllCaps = false
+            textSize = 14f
+            setTextColor(C_TEXT)
+            background = tileBg(C_PANEL2)
+            setOnClickListener { showEffectBrowserDialog() }
+        }
+        val addLp = lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+        addLp.topMargin = dp(6)
+        c.addView(addEffectBtn, addLp)
+
+        scaffold("Effects (प्रभाव)", intArrayOf(P_X, P_Y, P_SCALE, P_ROT, P_ALPHA), scroll(c))
+    }
+
+    private data class BrowserEffect(val title: String, val subtitle: String, val action: () -> Unit)
+
+    private fun showEffectBrowserDialog() {
+        val l = p.sel ?: return
+        val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(C_INK)
+        }
+
+        // Header Bar: Close '✕', Title 'प्रभाव ब्राउज़र', Search Box
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(C_PANEL)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        val closeBtn = TextView(ctx).apply {
+            text = "✕"
+            textSize = 18f
+            setTextColor(C_TEXT)
+            setPadding(dp(10), dp(6), dp(14), dp(6))
+            setOnClickListener { dialog.dismiss() }
+        }
+        val titleTv = TextView(ctx).apply {
+            text = "प्रभाव ब्राउज़र (Effect Browser)"
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(C_TEXT)
+            layoutParams = lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        header.addView(closeBtn)
+        header.addView(titleTv)
+        root.addView(header)
+
+        // Search input
+        val searchBox = EditText(ctx).apply {
+            hint = "🔍 Search effects..."
+            setHintTextColor(C_DIM)
+            setTextColor(C_TEXT)
+            textSize = 13f
+            setSingleLine(true)
+            background = tileBg(C_PANEL2)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        val sLp = lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        sLp.setMargins(dp(12), dp(8), dp(12), dp(4))
+        root.addView(searchBox, sLp)
+
+        val contentBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(24))
+        }
+        val sv = ScrollView(ctx)
+        sv.addView(contentBox)
+        root.addView(sv, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val allEffects = listOf(
+            BrowserEffect("Wiggle / Oscillate (झुलाना)", "Move & Transform") { expressions() },
+            BrowserEffect("Drop Shadow (छाया)", "Border & Shadow") {
+                l.shadowOn = true; host.changed(); host.commit(); borderTab = 1; border()
+            },
+            BrowserEffect("Stroke / Outline (सीमा)", "Border & Shadow") {
+                if (l.strokeW <= 0f) l.strokeW = 6f
+                host.changed(); host.commit(); borderTab = 0; border()
+            },
+            BrowserEffect("Gradient Ramp (रंग ढाल)", "Colour & Light") {
+                l.fillType = 2; host.changed(); host.commit(); fill()
+            },
+            BrowserEffect("3D Flip / Perspective (3 डी)", "3D") {
+                l.threeD = true; host.changed(); host.commit(); transform(1)
+            },
+            BrowserEffect("Skew / Warp (विरूपण/रैप)", "Distortion / Warp") { transform(3) },
+            BrowserEffect("Fade In / Out (फ़ेड इन/आउट)", "Opacity / Visibility") {
+                Presets.all["Fade in"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Fade In applied")
+            },
+            BrowserEffect("Pop In (पॉप इन)", "Move & Transform") {
+                Presets.all["Pop in"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Pop In applied")
+            },
+            BrowserEffect("Slide Up (स्लाइड अप)", "Move & Transform") {
+                Presets.all["Slide up"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Slide Up applied")
+            },
+            BrowserEffect("Spin In (स्पिन इन)", "Move & Transform") {
+                Presets.all["Spin in"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Spin In applied")
+            },
+            BrowserEffect("Bounce Drop (बाउंस)", "Move & Transform") {
+                Presets.all["Bounce drop"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Bounce Drop applied")
+            },
+            BrowserEffect("Fly In 3D (3 डी फ्लाई)", "3D") {
+                Presets.all["Fly in 3D"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Fly in 3D applied")
+            },
+            BrowserEffect("Flip 3D (3 डी फ्लिप)", "3D") {
+                Presets.all["Flip 3D"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Flip 3D applied")
+            },
+            BrowserEffect("Orbit 360° (360° परिक्रमा)", "3D") {
+                Presets.all["Orbit 360"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Orbit 360 applied")
+            },
+            BrowserEffect("Camera Shake (कैमरा शेक)", "Move & Transform") {
+                Presets.all["Camera shake"]?.invoke(l, p.time)
+                host.changed(); settled(); host.toast("Camera shake applied")
+            },
+            BrowserEffect("Blending & Opacity (अपारदर्शिता)", "Opacity / Visibility") { blend() }
+        )
+
+        val categories = listOf(
+            "रंग और प्रकाश (Color & Light)" to { fill() },
+            "ड्राइंग और एज (Drawing & Edge)" to { borderTab = 0; border() },
+            "सीमा और छाया (Border & Shadow)" to { borderTab = 1; border() },
+            "विरूपण / रैप (Distortion/Warp)" to { transform(3) },
+            "प्रक्रियात्मक (Wiggle & Loop)" to { expressions() },
+            "3 डी (3D Transform)" to { l.threeD = true; transform(1) },
+            "ले जाएँ / रूपांतरण (Move/Transform)" to { transform(0) },
+            "अपारदर्शिता / दृश्यता (Opacity)" to { blend() },
+            "प्रीसेट्स (Animation Presets)" to { presets() },
+            "टेक्स्ट (Text Formatting)" to { editText() }
+        )
+
+        fun renderBrowser(q: String) {
+            contentBox.removeAllViews()
+            val shown = if (q.isEmpty()) allEffects else allEffects.filter {
+                it.title.lowercase().contains(q) || it.subtitle.lowercase().contains(q)
+            }
+
+            // Popular Effects Grid (2 columns like Video 0:57)
+            val grid = GridLayout(ctx).apply {
+                columnCount = 2
+                layoutParams = lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
+
+            for (fx in shown) {
+                val card = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    background = tileBg(C_PANEL2)
+                    setPadding(dp(8), dp(12), dp(8), dp(12))
+                    layoutParams = GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = dp(78)
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        setMargins(dp(5), dp(5), dp(5), dp(5))
+                    }
+                    setOnClickListener {
+                        dialog.dismiss()
+                        fx.action()
+                    }
+                }
+                val t1 = TextView(ctx).apply {
+                    text = "✦ " + fx.title
+                    setTextColor(C_TEXT)
+                    textSize = 12f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                }
+                val t2 = TextView(ctx).apply {
+                    text = fx.subtitle
+                    setTextColor(C_DIM)
+                    textSize = 10f
+                    gravity = Gravity.CENTER
+                }
+                card.addView(t1)
+                card.addView(t2)
+                grid.addView(card)
+            }
+            contentBox.addView(grid)
+
+            if (q.isEmpty()) {
+                val catHeader = lbl("श्रेणियाँ (Effect Categories)")
+                catHeader.setPadding(dp(6), dp(14), dp(6), dp(6))
+                contentBox.addView(catHeader)
+
+                val catGrid = GridLayout(ctx).apply {
+                    columnCount = 2
+                    layoutParams = lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                }
+                for ((catName, catAction) in categories) {
+                    val cBtn = Button(ctx).apply {
+                        text = catName
+                        isAllCaps = false
+                        setTextColor(C_TEXT)
+                        textSize = 12f
+                        background = tileBg(0xFF282D42.toInt())
+                        layoutParams = GridLayout.LayoutParams().apply {
+                            width = 0
+                            height = dp(64)
+                            columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                            setMargins(dp(5), dp(5), dp(5), dp(5))
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            catAction()
+                        }
+                    }
+                    catGrid.addView(cBtn)
+                }
+                contentBox.addView(catGrid)
+            }
+        }
+
+        searchBox.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                renderBrowser(s.toString().trim().lowercase())
+            }
+        })
+
+        renderBrowser("")
+        dialog.setContentView(root)
+        dialog.show()
     }
 
     private fun toggle3d() {
@@ -518,7 +793,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
     private fun mute() {
         val l = p.sel ?: return
         l.muted = !l.muted
-        host.toast(if (l.muted) "Muted (audio arrives in a later update)" else "Unmuted")
+        host.toast(if (l.muted) "Muted" else "Unmuted")
         host.commit()
     }
 
@@ -563,7 +838,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
                     { v -> setZ(l, (v - 1500).toFloat()) },
                     { v -> (v - 1500).toString() })
                 val pad = TextView(ctx)
-                pad.text = "Swipe here to move"
+                pad.text = "Swipe here to move layer"
                 pad.setTextColor(C_DIM)
                 pad.gravity = Gravity.CENTER
                 pad.background = tileBg(C_PANEL2)
@@ -590,11 +865,11 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
                 props = intArrayOf(P_ROT, P_RX, P_RY)
                 val names = if (cam) arrayOf("Roll", "Tilt", "Orbit") else arrayOf("Rotate Z", "Rotate X (tilt)", "Rotate Y (turn)")
                 sl(c, names[0], 720, { (l.eval(P_ROT, p.time) + 360f).toInt() },
-                    { v -> l.set(P_ROT, p.time, (v - 360).toFloat(), p.easeIdx) }, { v -> (v - 360).toString() + "\u00B0" })
+                    { v -> l.set(P_ROT, p.time, (v - 360).toFloat(), p.easeIdx) }, { v -> (v - 360).toString() + "°" })
                 sl(c, names[1], 720, { (l.eval(P_RX, p.time) + 360f).toInt() },
-                    { v -> setAxis(l, P_RX, (v - 360).toFloat()) }, { v -> (v - 360).toString() + "\u00B0" })
+                    { v -> setAxis(l, P_RX, (v - 360).toFloat()) }, { v -> (v - 360).toString() + "°" })
                 sl(c, names[2], 720, { (l.eval(P_RY, p.time) + 360f).toInt() },
-                    { v -> setAxis(l, P_RY, (v - 360).toFloat()) }, { v -> (v - 360).toString() + "\u00B0" })
+                    { v -> setAxis(l, P_RY, (v - 360).toFloat()) }, { v -> (v - 360).toString() + "°" })
             }
             2 -> {
                 props = intArrayOf(P_SCALE)
@@ -636,8 +911,8 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
                 if (cam) {
                     c.addView(lbl("Skew and flip do not apply to the camera"))
                 } else {
-                    sl(c, "Skew X", 120, { (l.skewX + 60f).toInt() }, { v -> l.skewX = (v - 60).toFloat() }, { v -> (v - 60).toString() + "\u00B0" })
-                    sl(c, "Skew Y", 120, { (l.skewY + 60f).toInt() }, { v -> l.skewY = (v - 60).toFloat() }, { v -> (v - 60).toString() + "\u00B0" })
+                    sl(c, "Skew X", 120, { (l.skewX + 60f).toInt() }, { v -> l.skewX = (v - 60).toFloat() }, { v -> (v - 60).toString() + "°" })
+                    sl(c, "Skew Y", 120, { (l.skewY + 60f).toInt() }, { v -> l.skewY = (v - 60).toFloat() }, { v -> (v - 60).toString() + "°" })
                     c.addView(hbox(
                         btn("Flip horizontal", 12f) { l.flipH = !l.flipH; host.changed(); settled() },
                         btn("Flip vertical", 12f) { l.flipV = !l.flipV; host.changed(); settled() }
@@ -708,10 +983,10 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
                 btn("Radial", 12f) { l.gradType = 1; host.changed(); host.commit() }
             ))
             val ta = lbl("Angle")
-            val sa = seek(360, { v -> l.gradAngle = v.toFloat(); host.changed(); ta.text = "Angle  $v\u00B0" }, { host.commit() })
+            val sa = seek(360, { v -> l.gradAngle = v.toFloat(); host.changed(); ta.text = "Angle  $v°" }, { host.commit() })
             c.addView(ta)
             c.addView(sa)
-            syncFns.add { ta.text = "Angle  " + l.gradAngle.toInt() + "\u00B0"; setProg(sa, l.gradAngle.toInt()) }
+            syncFns.add { ta.text = "Angle  " + l.gradAngle.toInt() + "°"; setProg(sa, l.gradAngle.toInt()) }
         }
         if (l.fillType == 1 || l.fillType == 2) colourEditor(c, l)
         scaffold("Colour & Fill", null, scroll(c))
@@ -946,7 +1221,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         }
         amp("Position", 200, 1f, intArrayOf(P_X, P_Y), "%.0f px")
         amp("Depth (Z)", 150, 2f, intArrayOf(P_Z), "%.0f")
-        amp("Rotation", 90, 0.5f, intArrayOf(P_ROT), "%.1f\u00B0")
+        amp("Rotation", 90, 0.5f, intArrayOf(P_ROT), "%.1f°")
         amp("Scale", 50, 0.01f, intArrayOf(P_SCALE), "%.2f")
         amp("Opacity", 50, 0.01f, intArrayOf(P_ALPHA), "%.2f")
         sl(c, "Speed", 195, { ((l.wigFreq - 0.5f) * 10f).toInt() }, { v -> l.wigFreq = 0.5f + v / 10f },
@@ -974,7 +1249,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
     private fun particles() {
         val l = p.sel ?: return
         if (l.type != T_PARTICLES) {
-            host.toast("Add a Particles layer from the + button, FX tab")
+            host.toast("Select a Particles layer")
             return
         }
         syncFns.clear()
@@ -985,8 +1260,8 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
         sl(c, "Speed", 1000, { l.pSpeed.toInt() }, { v -> l.pSpeed = v.toFloat() }, { v -> v.toString() })
         sl(c, "Size", 195, { l.pSize.toInt() - 5 }, { v -> l.pSize = (v + 5).toFloat() }, { v -> (v + 5).toString() })
         sl(c, "Gravity", 2000, { l.pGravity.toInt() + 500 }, { v -> l.pGravity = (v - 500).toFloat() }, { v -> (v - 500).toString() })
-        sl(c, "Spread", 360, { l.pSpread.toInt() }, { v -> l.pSpread = v.toFloat() }, { v -> v.toString() + "\u00B0" })
-        sl(c, "Direction", 360, { (l.pAngle + 180f).toInt() }, { v -> l.pAngle = (v - 180).toFloat() }, { v -> (v - 180).toString() + "\u00B0" })
+        sl(c, "Spread", 360, { l.pSpread.toInt() }, { v -> l.pSpread = v.toFloat() }, { v -> v.toString() + "°" })
+        sl(c, "Direction", 360, { (l.pAngle + 180f).toInt() }, { v -> l.pAngle = (v - 180).toFloat() }, { v -> (v - 180).toString() + "°" })
         c.addView(btn("Colour", 12f) { fill() })
         scaffold("Particles", null, scroll(c))
     }
