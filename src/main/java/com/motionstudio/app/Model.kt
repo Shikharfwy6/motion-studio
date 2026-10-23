@@ -285,6 +285,7 @@ class Project(var id: String = UUID.randomUUID().toString().replace("-", "").tak
     fun nextLayerId() = nextId++
 
     /** Sets the composition length. Layers that follow the composition end stretch or shrink with it. */
+    @JvmName("updateDuration")
     fun setDuration(d: Float) {
         duration = d
         for (l in layers) {
