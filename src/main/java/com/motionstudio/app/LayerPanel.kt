@@ -290,7 +290,7 @@ class LayerPanel(private val ctx: Context, private val p: Project, private val h
     /** Graph editor: edit the curve of the keyframe at the playhead (the segment that leaves this keyframe). */
     private fun openCurve(props: IntArray) {
         val l = p.sel ?: return
-        val ks = props.mapNotNull { l.keyAt(it, p.time) }
+        val ks = props.toList().mapNotNull { l.keyAt(it, p.time) }
         if (ks.isEmpty()) {
             host.toast("Add a keyframe here first (tap the diamond), then edit its curve")
             return
