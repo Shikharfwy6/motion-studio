@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MotionStudioPreset version="1.0" name="RGB Chromatic Shake" description="Fast RGB split distortion pulse with directional motion blur impact" threeD="false">
+    <effect id="rgb"/>
+    <effect id="mblur"/>
+    <property id="rgb" value="12.0">
+        <key time="0.0" value="0.0" ease="2"/>
+        <key time="0.2" value="18.0" ease="4"/>
+        <key time="0.7" value="0.0" ease="2"/>
+    </property>
+    <property id="mblur" value="25.0">
+        <key time="0.0" value="0.0" ease="2"/>
+        <key time="0.2" value="35.0" ease="4"/>
+        <key time="0.7" value="0.0" ease="2"/>
+    </property>
+    <property id="mbang" value="45.0"/>
+</MotionStudioPreset>
