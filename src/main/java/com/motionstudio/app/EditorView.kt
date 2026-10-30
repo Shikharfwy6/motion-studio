@@ -2,6 +2,7 @@ package com.motionstudio.app
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.view.MotionEvent
