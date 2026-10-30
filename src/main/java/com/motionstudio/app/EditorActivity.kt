@@ -717,7 +717,7 @@ class EditorActivity : Activity(), PanelHost {
                 runOnUiThread {
                     if (preset != null) {
                         toast("Imported preset: ${preset.name}")
-                        val sel = p.layers.getOrNull(selectedLayer)
+                        val sel = p.sel ?: p.layers.firstOrNull()
                         if (sel != null) {
                             EffectPresetManager.applyPreset(preset, sel, p.time, p.easeIdx)
                             changed()
