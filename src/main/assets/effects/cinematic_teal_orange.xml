@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MotionStudioPreset version="1.0" name="Cinematic Teal &amp; Orange" description="Blockbuster movie grading with teal shadows, warm orange skin tones, high contrast and soft vignette" threeD="false">
+    <effect id="bright"/>
+    <effect id="huesat"/>
+    <effect id="tint"/>
+    <effect id="vig"/>
+    <property id="bright" value="0.06"/>
+    <property id="contrast" value="0.22"/>
+    <property id="sat" value="0.18"/>
+    <property id="tint" value="0.35"/>
+    <property id="tintColor" color="#FFFF7A3D"/>
+    <property id="vig" value="0.45"/>
+    <property id="grain" value="0.12"/>
+</MotionStudioPreset>

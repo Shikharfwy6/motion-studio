@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================
+   LISTRAS — o Stripes do Alight Motion, conta por conta (0.540.0)
+  ============================================================================
+
+  Pedido do snow (14/10/2026): "pode fazer agora o efeito listras/stripes 100% parecido com o do alight
+  motion?". Mesmos parâmetros, mesmos ids e mesmos padrões do `com.alightcreative.effects.stripes` (um
+  projeto do AM importado cai direto aqui). A conta foi LIDA do efeito do AM 5.0.281
+  (`assets/effects/stripes.xml` do APK descompactado) e escrita de novo aqui; o arquivo do AM não entra no
+  repositório. A conferência é `tools/amlistras`: o efeito do AM rodado na GPU do PC ao lado deste.
+
+  O QUE O EFEITO DO AM FAZ (e este repete):
+
+  - As listras são medidas na TELA, não na camada: girar ou escalar a camada não gira nem escala as
+    listras (o AM roda os efeitos depois da transformação). Aqui o efeito roda no buffer da camada, antes
+    dela; `acTela` leva cada pixel à tela, e a conta é a mesma.
+  - A régua: a distância do pixel até a POSIÇÃO da camada (o ponto onde a âncora cai), em px da tela,
+    dividida pela diagonal do conteúdo da camada SEM a escala — a forma, a caixa do texto, a mídia
+    (`acLayerCenter` e `acLayerSize` do AM, lidos do bytecode dele; aqui `acCentroDaCamada` e
+    `acTamanhoDaCamada`). Contagem = quantas listras cabem nessa diagonal.
+  - "Espaço na tela": a régua passa a ser a tela — do meio dela, dividida pela altura.
+  - O Ângulo gira a régua: u = x · sen(a) − y · cos(a), com Y para baixo e a = Ângulo × 0,0174533 (o
+    número do AM, não π/180). Com 45°, as listras descem da esquerda para a direita.
+  - p = fração de (u · Contagem + Fase): a listra é p entre 0 e Largura, com bordas suaves de
+    Suavização (em fração do período) — os dois smoothstep do AM, um deles com as pontas invertidas.
+    Com Suavização 0 o AM divide por zero e a listra INVERTE (vira o pedaço de Largura a 1); repetido.
+  - Só nas partes opacas: a cor entra multiplicada pelo alfa da camada e por cima dela, em cor
+    pré-multiplicada (cor · p · alfa + camada · (1 − p · alfa)). No alfa parcial a listra deixa o pixel
+    mais opaco (alfa · (1 + p − p · alfa)) — é o que o AM faz. "Expandir" (o Punch Out) vaza a camada no
+    lugar das listras em vez de pintar.
+  - A cor do AM não tem alfa (`alpha="false"`); aqui, se tiver, ela entra pré-multiplicada (com alfa 1, a
+    mesma conta).
+-->
+<effect
+    id="nova.effect.am-stripes"
+    name="Listras"
+    name-en="Stripes"
+    desc="Desenha um padrão de listras nas partes opacas da camada (o Stripes do Alight Motion)."
+    desc-en="Renders a pattern of stripes in the opaque parts of the layer (Alight Motion's Stripes)."
+    category="procedural"
+    tags="listras,faixas,padrão,stripes,pattern,linhas,alight motion"
+    screen-scale="safe">
+
+    <params>
+        <texture id="inputImg" src="content" />
+
+        <slider id="amount" label="Contagem" default="10.0" min="0.5" max="200.0" step="0.1" ticks="10.0" />
+        <slider id="width" label="Largura" default="0.5" min="0.0" max="1.0" step="0.01" ticks="0.5" />
+        <slider id="angle" label="Ângulo" default="45.0" min="0.0" max="3600.0" step="0.5" type="angle"
+            ticks="0.0,45.0,90.0,135.0,180.0,225.0,270.0,315.0,360.0" />
+        <slider id="phase" label="Fase" default="0.0" min="0.0" max="1000.0" step="0.01"
+            ticks="1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0" />
+        <color id="color" label="Cor" default="#FF2D1EF6" />
+        <switch id="punchout" label="Expandir" default="false" />
+        <slider id="smoothing" label="Suavização" default="0.01" min="0.0" max="0.5" step="0.01" />
+        <switch id="screenSpace" label="Espaço na tela" default="false" />
+    </params>
+
+    <shader><![CDATA[
+// O smoothstep do AM com as pontas em qualquer ordem (o GLSL não garante o resultado com e0 > e1). Com as
+// pontas iguais o AM divide por zero: ±infinito, preso em 0 ou 1 — o degrau x > e0 (a GPU do PC; no ponto
+// exato ela dá NaN e o pixel some, aqui fica 0).
+float degrau(float e0, float e1, float x) {
+    if (e1 == e0) return x > e0 ? 1.0 : 0.0;
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// UV do buffer → UV da tela, com Y para baixo (o do AM). O `acTela` devolve a UV da cena guardada de pé, a do GL
+// (t = 0 EMBAIXO: é com ela que o Copiar fundo amostra o fundo), e a cena de pé (grupo solto, modelo 3D, ajuste) já
+// é essa tela. Nos dois casos, inverter o t.
+vec2 naTela(vec2 uv) {
+    vec2 t = acEntradaDePe == 1 ? uv : acTela(uv);
+    return vec2(t.x, 1.0 - t.y);
+}
+
+void main() {
+    vec4 base = texture(inputImg, acScreenNorm);   // alfa reto
+    vec2 tela = naTela(acScreenNorm);
+
+    // A conta na MESMA ordem do AM (em px da tela, a matriz por fora): na borda dura (Suavização 0) um pixel
+    // que cai em cima da borda vira para um lado ou o outro pelo arredondamento do float.
+    vec2 st;
+    if (screenSpace) {
+        st = tela;
+        st -= 0.5;
+        st.x *= acTamanhoDaTela.x / acTamanhoDaTela.y;
+    } else {
+        st = ((tela * acTamanhoDaTela) - naTela(acCentroDaCamada) * acTamanhoDaTela) / length(acTamanhoDaCamada);
+    }
+    float a = angle * 0.0174533;
+    st *= mat2(
+        sin(a), -cos(a),
+        cos(a), sin(a)
+    );
+    float p = mod(st.x * amount + phase, 1.0);
+    p = degrau(width, width - smoothing, p) * degrau(0.0, smoothing, p);
+
+    vec4 camada = vec4(base.rgb * base.a, base.a);   // pré-multiplicada, como o AM
+    vec4 saida;
+    if (punchout) {
+        saida = camada * (1.0 - p);
+    } else {
+        vec4 c = vec4(color.rgb * color.a, color.a) * (p * base.a);
+        saida = c + camada * (1.0 - c.a);
+    }
+    fragColor = saida.a > 0.0 ? vec4(saida.rgb / saida.a, saida.a) : vec4(0.0);
+}
+    ]]></shader>
+</effect>
